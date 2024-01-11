@@ -1,0 +1,57 @@
+ARG ubuntu_version=22.04
+FROM ubuntu:${ubuntu_version} as base
+
+ARG tmux_version=3.3a
+ARG libevent_version=2.1.12
+ARG ncurses_version=6.4
+ARG ncurses_fallbacks=xterm
+
+# Note: We install ncurses here to enable fallback support for the locally-
+#       built version below
+RUN apt update && \
+    apt upgrade -y && \
+    apt install -y --no-install-recommends \
+        autoconf \
+        automake \
+        bison \
+        ca-certificates \
+        g++ \
+        make \
+        libncurses6 \
+        libssl-dev \
+        pkg-config \
+        upx \
+        wget
+
+WORKDIR /builder
+
+# Build libevent
+RUN wget https://github.com/libevent/libevent/releases/download/release-${libevent_version}-stable/libevent-${libevent_version}-stable.tar.gz && \
+    tar -zxf libevent-${libevent_version}-stable.tar.gz && \
+    cd libevent-${libevent_version}-stable && \
+    ./configure --prefix=/builder/local --enable-shared && \
+    make -j && \
+    make install
+
+# Build ncurses
+RUN wget https://ftp.gnu.org/gnu/ncurses/ncurses-${ncurses_version}.tar.gz && \
+    tar -zxf ncurses-${ncurses_version}.tar.gz && \
+    cd ncurses-${ncurses_version} && \
+    ./configure --prefix=/builder/local --enable-termcap --with-fallbacks=${ncurses_fallbacks} --disable-database --enable-pc-files --with-pkg-config-libdir=/builder/local/lib/pkgconfig && \
+    make -j && \
+    make install
+
+# Build tmux
+# Note: Using UPX with --ultra-brute prevents tmux from launching
+RUN wget https://github.com/tmux/tmux/releases/download/${tmux_version}/tmux-${tmux_version}.tar.gz && \
+    tar -zxf tmux-${tmux_version}.tar.gz && \
+    cd tmux-${tmux_version} && \
+    env PKG_CONFIG_PATH=/builder/local/lib/pkgconfig ./configure --enable-static && \
+    make -j && \
+    make install && \
+    strip /usr/local/bin/tmux && \
+    upx --best /usr/local/bin/tmux
+
+# Build done; copy the standalone executable to a fresh Ubuntu image
+FROM ubuntu:${ubuntu_version}
+COPY --from=base /usr/local/bin/tmux /usr/local/bin/tmux
